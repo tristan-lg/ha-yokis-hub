@@ -3,6 +3,8 @@
 Intégration personnalisée pour piloter les modules Yokis via un **YokisHub** sur
 le réseau local (polling). Elle se configure depuis l'interface (UI).
 
+Vibecodé avec Claude Opus 4.8
+
 ## Fonctionnalités
 
 - Configuration via l'UI : **adresse du Hub + e-mail + mot de passe** (HTTP Basic Auth).
@@ -31,6 +33,5 @@ le réseau local (polling). Elle se configure depuis l'interface (UI).
 ## Hors périmètre (à venir)
 
 - Thermostats (`climate`).
-- Position variable 0–100 % des volets.
 - Groupes, scénarios, zones.
 
