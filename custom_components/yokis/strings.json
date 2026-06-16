@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Yokis Hub",
+        "description": "Renseignez l'adresse du Hub Yokis et vos identifiants.",
+        "data": {
+          "host": "Adresse (IP ou nom d'hôte)",
+          "email": "Adresse e-mail",
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de joindre le Hub.",
+      "invalid_auth": "Identifiants invalides.",
+      "unknown": "Erreur inattendue."
+    },
+    "abort": {
+      "already_configured": "Ce Hub est déjà configuré."
+    }
+  }
+}
+
