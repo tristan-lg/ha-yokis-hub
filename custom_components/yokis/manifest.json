@@ -8,7 +8,7 @@
   "iot_class": "local_polling",
   "name": "Yokis Hub",
   "requirements": ["pyzipper>=0.4.0"],
-  "version": "2.0.0"
+  "version": "2.1.0"
 }
 
 
