@@ -85,10 +85,10 @@ class YokisLight(YokisEntity, LightEntity):
             await self.coordinator.api.async_send_order(self._uid, ORDER_GOTO, pct)
         else:
             await self.coordinator.api.async_send_order(self._uid, ORDER_ON)
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_request_confirm_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Éteint l'éclairage."""
         await self.coordinator.api.async_send_order(self._uid, ORDER_OFF)
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_request_confirm_refresh()
 

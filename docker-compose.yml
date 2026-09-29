@@ -2,7 +2,7 @@
 services:
   homeassistant:
     container_name: homeassistant-yokis
-    image: ghcr.io/home-assistant/home-assistant:stable
+    image: homeassistant/home-assistant:stable
     volumes:
       - ./config:/config
       - ./custom_components/yokis:/config/custom_components/yokis
