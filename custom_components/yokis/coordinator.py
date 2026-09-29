@@ -2,16 +2,23 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import YokisApiError, YokisAuthError, YokisHubApi
 from .const import DOMAIN, SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
+
+# Intervalle et durée du rafraîchissement rapide déclenché après une commande
+# de volet (suivi de mouvement au plus près, sans attendre le SCAN_INTERVAL).
+FAST_POLL_INTERVAL = timedelta(seconds=1)
+FAST_POLL_DURATION = 30
 
 
 def _norm_uid(uid: Any) -> str:
@@ -37,6 +44,45 @@ class YokisDataUpdateCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]
         self.hub_info: dict[str, Any] = {}
         # Métadonnées des modules indexées par uid (issues de Project.zip).
         self._modules: dict[str, dict[str, Any]] = {}
+        # Minuteur de retour à l'intervalle normal après un rafraîchissement rapide.
+        self._fast_poll_unsub: CALLBACK_TYPE | None = None
+
+    async def async_request_fast_poll(self, duration: timedelta = FAST_POLL_DURATION) -> None:
+        """Bascule temporairement sur un rafraîchissement rapide.
+
+        Utilisé après une commande d'ouverture/fermeture de volet : pendant
+        `FAST_POLL_DURATION` secondes, l'état est interrogé toutes les
+        `FAST_POLL_INTERVAL` (1s) au lieu du `SCAN_INTERVAL` habituel (10s),
+        afin de suivre le mouvement du volet au plus près.
+        """
+        # Une nouvelle commande pendant la fenêtre prolonge simplement celle-ci.
+        if self._fast_poll_unsub is not None:
+            self._fast_poll_unsub()
+        self.update_interval = FAST_POLL_INTERVAL
+        self._fast_poll_unsub = async_call_later(
+            self.hass, duration, self._async_end_fast_poll
+        )
+        await self.async_request_refresh()
+
+    @callback
+    def _async_end_fast_poll(self, _now: Any) -> None:
+        """Revient à l'intervalle de rafraîchissement normal."""
+        self._fast_poll_unsub = None
+        self.update_interval = SCAN_INTERVAL
+
+    async def async_request_confirm_refresh(self, delay: float = 1) -> None:
+        """Rafraîchit immédiatement, puis confirme une seconde fois plus tard.
+
+        Utilisé après une commande d'allumage/extinction : le Hub Yokis ne
+        reflète pas toujours l'état instantanément, ce second passage (par
+        défaut 1s plus tard) rattrape l'état final.
+        """
+        await self.async_request_refresh()
+        async_call_later(self.hass, delay, self._async_confirm_refresh)
+
+    async def _async_confirm_refresh(self, _now: Any) -> None:
+        """Second rafraîchissement, exécuté directement (hors debounce)."""
+        await self.async_refresh()
 
     async def _async_setup_modules(self) -> None:
         """Charge les métadonnées des modules + l'identité du Hub (1 fois)."""

@@ -117,17 +117,17 @@ class YokisCover(YokisEntity, CoverEntity):
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Ouvre le volet (order=on)."""
         await self.coordinator.api.async_send_order(self._uid, ORDER_ON)
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_request_fast_poll()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Ferme le volet (order=down)."""
         await self.coordinator.api.async_send_order(self._uid, ORDER_DOWN)
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_request_confirm_refresh()
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Arrête le volet en mouvement (order=off)."""
         await self.coordinator.api.async_send_order(self._uid, ORDER_OFF)
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_request_fast_poll()
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Règle précisément la position du volet (order=varX&ext1=<%>).
@@ -137,5 +137,5 @@ class YokisCover(YokisEntity, CoverEntity):
         position = int(kwargs[ATTR_POSITION])
         position = min(max(position, 0), 100)
         await self.coordinator.api.async_send_order(self._uid, ORDER_GOTO, position)
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_request_fast_poll()
 
