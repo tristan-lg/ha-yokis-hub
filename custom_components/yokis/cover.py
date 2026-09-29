@@ -23,7 +23,7 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
@@ -43,6 +43,8 @@ DATA_BIT_VARX = 4
 # Bit du champ `data` indiquant l'état « ouvert » d'un volet classique
 # (sans varX) : ouvert data=10 (bit 1 = 1), fermé data=1 (bit 1 = 0).
 DATA_BIT_OPEN = 1
+# Valeur de `data` d'un volet classique totalement fermé.
+DATA_CLOSED = 1
 
 
 async def async_setup_entry(
@@ -67,6 +69,33 @@ class YokisCover(YokisEntity, CoverEntity):
         CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
     )
 
+    def __init__(self, coordinator: YokisDataUpdateCoordinator, uid: str) -> None:
+        """Initialise le volet."""
+        super().__init__(coordinator, uid)
+        # Volet arrêté à mi-course via la commande stop : sa position réelle
+        # est inconnue, on laisse donc ouverture ET fermeture possibles.
+        self._stopped_midway = False
+        # Un état « à l'arrêt » a été observé depuis le stop (évite qu'un état
+        # « en mouvement » encore renvoyé par le Hub juste après le stop
+        # n'annule immédiatement le marqueur).
+        self._idle_seen_since_stop = False
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Lève le marqueur « mi-course » dès qu'un nouveau mouvement démarre."""
+        if self._stopped_midway:
+            moving = self.is_opening or self.is_closing
+            if not moving:
+                self._idle_seen_since_stop = True
+            elif self._idle_seen_since_stop:
+                # Mouvement déclenché ailleurs (interrupteur mural, app...).
+                self._stopped_midway = False
+        super()._handle_coordinator_update()
+
+    def _set_stopped_midway(self, value: bool) -> None:
+        self._stopped_midway = value
+        self._idle_seen_since_stop = False
+
     @property
     def _has_varx(self) -> bool:
         """Le volet supporte le positionnement précis (bit 4 de `data`)."""
@@ -85,13 +114,22 @@ class YokisCover(YokisEntity, CoverEntity):
         """État fermé du volet.
 
         - Volet AVEC varX : fermé si la position `var` vaut 0 (logique Yokis).
-        - Volet SANS varX : `var` étant figé, on lit le drapeau « ouvert » du
-          champ `data` (bit 1) ; fermé s'il est absent.
+        - Volet SANS varX : `var` étant figé, on lit le champ `data` : ouvert
+          si le bit 1 est présent, fermé uniquement pour la valeur « fermé »
+          connue (data=1), inconnu sinon.
+        - Après un stop à mi-course : inconnu (None), pour que HA propose à la
+          fois l'ouverture et la fermeture.
         Pendant un mouvement, `is_opening`/`is_closing` priment dans l'UI.
         """
+        if self._stopped_midway:
+            return None
         if self._has_varx:
             return self._var == 0
-        return not bool((self._data >> DATA_BIT_OPEN) & 1)
+        if (self._data >> DATA_BIT_OPEN) & 1:
+            return False
+        if self._data == DATA_CLOSED:
+            return True
+        return None
 
     @property
     def current_cover_position(self) -> int | None:
@@ -117,16 +155,19 @@ class YokisCover(YokisEntity, CoverEntity):
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Ouvre le volet (order=on)."""
         await self.coordinator.api.async_send_order(self._uid, ORDER_ON)
+        self._set_stopped_midway(False)
         await self.coordinator.async_request_fast_poll()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Ferme le volet (order=down)."""
         await self.coordinator.api.async_send_order(self._uid, ORDER_DOWN)
+        self._set_stopped_midway(False)
         await self.coordinator.async_request_confirm_refresh()
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Arrête le volet en mouvement (order=off)."""
         await self.coordinator.api.async_send_order(self._uid, ORDER_OFF)
+        self._set_stopped_midway(True)
         await self.coordinator.async_request_fast_poll()
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
@@ -137,5 +178,6 @@ class YokisCover(YokisEntity, CoverEntity):
         position = int(kwargs[ATTR_POSITION])
         position = min(max(position, 0), 100)
         await self.coordinator.api.async_send_order(self._uid, ORDER_GOTO, position)
+        self._set_stopped_midway(False)
         await self.coordinator.async_request_fast_poll()
 
