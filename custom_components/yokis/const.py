@@ -24,6 +24,13 @@ ZIP_PASSWORD = "bUz?%HtS4W3%375G"
 # Délai HTTP par défaut (secondes)
 DEFAULT_TIMEOUT = 10
 
+# Durée (secondes) d'un cycle complet d'ouverture/fermeture d'un volet,
+# mesurée manuellement. Le Hub Yokis ne remontant aucun état « en
+# mouvement » fiable, cette durée sert de fenêtre pendant laquelle
+# `is_opening`/`is_closing` reste vrai après un changement de position
+# détecté (cf. custom_components/yokis/cover.py).
+COVER_MOVEMENT_DURATION = 28
+
 # --- Ordres de commande (command.xml?action=order&order=<order>) ---
 # cf. models/Action.java
 ORDER_ON = "on"

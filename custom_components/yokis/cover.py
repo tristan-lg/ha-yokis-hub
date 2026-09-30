@@ -12,9 +12,34 @@ Logique d'état dérivée du code source décompilé de l'app Yokis :
 - Commandes (cf. ``OrderActionText`` / ``PilotShutterActivity``) :
   ouvrir = ``on`` ; fermer = ``down`` ; stop = ``off`` ;
   position = ``varX`` + ``ext1`` (0 = fermé, 100 = ouvert).
+
+Détection ouverture/fermeture en cours :
+
+Le Hub Yokis ne remonte aucun bit fiable indiquant qu'un volet est en train
+de bouger (les constantes ``ModuleState.CLIMBING``/``DESCENDING`` existent
+dans le code décompilé mais ne sont utilisées nulle part ailleurs dans
+l'app -> vérifié non fiable en pratique). Un volet met ~28 s pour un cycle
+complet d'ouverture/fermeture (mesuré manuellement).
+
+On simule donc l'état « en mouvement » de deux façons complémentaires :
+1. Commande envoyée depuis HA (``async_open/close_cover``) : on démarre la
+   fenêtre de mouvement immédiatement (retour instantané dans l'UI), sans
+   attendre le prochain poll.
+2. Commande manuelle (bouton mural, télécommande RF) : HA ne reçoit aucune
+   notification (l'API est en polling pur). On détecte le changement en
+   comparant la position à chaque rafraîchissement du coordinator
+   (``_handle_coordinator_update``) à la valeur précédemment connue : si
+   elle diffère, on (re)démarre la fenêtre de mouvement. Le délai de
+   détection est alors borné par l'intervalle de polling (``SCAN_INTERVAL``,
+   10 s), ce qui est la meilleure précision possible sans push du Hub.
+Dans les deux cas, tant que ``time.monotonic() - _transition_at`` reste
+sous ``COVER_MOVEMENT_DURATION`` (28 s), `is_opening`/`is_closing` reflète
+le sens du dernier changement observé (position croissante = ouverture,
+décroissante = fermeture).
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.components.cover import (
@@ -23,10 +48,11 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    COVER_MOVEMENT_DURATION,
     COVER_USES,
     DOMAIN,
     ORDER_DOWN,
@@ -35,7 +61,7 @@ from .const import (
     ORDER_ON,
 )
 from .coordinator import YokisDataUpdateCoordinator
-from .entity import DATA_CLIMBING, DATA_DESCENDING, YokisEntity
+from .entity import YokisEntity
 
 # Bit du champ `data` indiquant la disponibilité du positionnement précis
 # (cf. Module.isShutterVarXAvailable -> testBit(data, 4)).
@@ -67,10 +93,63 @@ class YokisCover(YokisEntity, CoverEntity):
         CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
     )
 
+    def __init__(self, coordinator: YokisDataUpdateCoordinator, uid: str) -> None:
+        """Initialise le suivi de position (détection de mouvement)."""
+        super().__init__(coordinator, uid)
+        # Dernière valeur de position observée (cf. `_position_value`).
+        self._last_position: int | None = None
+        # Horodatage (monotonic) du dernier changement de position détecté.
+        self._transition_at: float | None = None
+        # Sens du dernier changement détecté : True = ouverture, False = fermeture.
+        self._moving_towards_open: bool | None = None
+
     @property
     def _has_varx(self) -> bool:
         """Le volet supporte le positionnement précis (bit 4 de `data`)."""
         return bool((self._data >> DATA_BIT_VARX) & 1)
+
+    @property
+    def _position_value(self) -> int:
+        """Valeur de référence pour détecter un changement de position.
+
+        - Volet AVEC varX : la position `var` (0-100).
+        - Volet SANS varX : pas de position intermédiaire -> 100 si ouvert,
+          0 si fermé (lecture du bit `data` via `is_closed`).
+        """
+        if self._has_varx:
+            return self._var
+        return 0 if self.is_closed else 100
+
+    @property
+    def _is_moving(self) -> bool:
+        """Un mouvement (ouverture ou fermeture) est présumé en cours.
+
+        Vrai pendant `COVER_MOVEMENT_DURATION` secondes après le dernier
+        changement de position détecté (cf. docstring du module).
+        """
+        if self._transition_at is None:
+            return False
+        return (time.monotonic() - self._transition_at) < COVER_MOVEMENT_DURATION
+
+    def _start_movement(self, *, towards_open: bool) -> None:
+        """(Re)démarre la fenêtre de mouvement dans le sens indiqué."""
+        self._transition_at = time.monotonic()
+        self._moving_towards_open = towards_open
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Détecte un changement de position entre deux rafraîchissements.
+
+        Couvre le cas d'une commande manuelle (bouton mural, télécommande) :
+        le Hub étant interrogé en polling pur, on ne peut détecter ce
+        changement qu'au prochain rafraîchissement du coordinator, avec un
+        délai borné par l'intervalle de polling en cours.
+        """
+        position = self._position_value
+        if self._last_position is not None and position != self._last_position:
+            self._start_movement(towards_open=position > self._last_position)
+        self._last_position = position
+        super()._handle_coordinator_update()
 
     @property
     def supported_features(self) -> CoverEntityFeature:
@@ -106,26 +185,36 @@ class YokisCover(YokisEntity, CoverEntity):
 
     @property
     def is_opening(self) -> bool:
-        """En montée : data == 19 (cf. ModuleState.CLIMBING)."""
-        return self._data == DATA_CLIMBING
+        """Ouverture en cours (cf. `_is_moving` / fenêtre de 28 s)."""
+        return self._is_moving and self._moving_towards_open is True
 
     @property
     def is_closing(self) -> bool:
-        """En descente : data == 17 (cf. ModuleState.DESCENDING)."""
-        return self._data == DATA_DESCENDING
+        """Fermeture en cours (cf. `_is_moving` / fenêtre de 28 s)."""
+        return self._is_moving and self._moving_towards_open is False
 
     async def async_open_cover(self, **kwargs: Any) -> None:
-        """Ouvre le volet (order=on)."""
+        """Ouvre le volet (order=on).
+
+        Démarre la fenêtre de mouvement immédiatement (retour instantané
+        dans l'UI) plutôt que d'attendre le prochain poll.
+        """
+        self._start_movement(towards_open=True)
+        self.async_write_ha_state()
         await self.coordinator.api.async_send_order(self._uid, ORDER_ON)
         await self.coordinator.async_request_fast_poll()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
-        """Ferme le volet (order=down)."""
+        """Ferme le volet (order=down). Voir `async_open_cover`."""
+        self._start_movement(towards_open=False)
+        self.async_write_ha_state()
         await self.coordinator.api.async_send_order(self._uid, ORDER_DOWN)
         await self.coordinator.async_request_confirm_refresh()
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Arrête le volet en mouvement (order=off)."""
+        self._transition_at = None
+        self.async_write_ha_state()
         await self.coordinator.api.async_send_order(self._uid, ORDER_OFF)
         await self.coordinator.async_request_fast_poll()
 
@@ -136,6 +225,9 @@ class YokisCover(YokisEntity, CoverEntity):
         """
         position = int(kwargs[ATTR_POSITION])
         position = min(max(position, 0), 100)
+        if self._has_varx:
+            self._start_movement(towards_open=position > self._var)
+            self.async_write_ha_state()
         await self.coordinator.api.async_send_order(self._uid, ORDER_GOTO, position)
         await self.coordinator.async_request_fast_poll()
 

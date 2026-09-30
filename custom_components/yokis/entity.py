@@ -9,10 +9,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import YokisDataUpdateCoordinator
 
-# Bits/valeurs de l'état (cf. ModuleState.java)
+# Bit de l'état (cf. ModuleState.java)
 STATE_BIT_ON = 0
-DATA_DESCENDING = 17
-DATA_CLIMBING = 19
 
 
 class YokisEntity(CoordinatorEntity[YokisDataUpdateCoordinator]):
