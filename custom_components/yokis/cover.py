@@ -93,6 +93,13 @@ class YokisCover(YokisEntity, CoverEntity):
         CoverEntityFeature.OPEN | CoverEntityFeature.CLOSE | CoverEntityFeature.STOP
     )
 
+    # Position/état pas garantis en temps réel (polling + volets sans varX
+    # figés sur `var`) : `assumed_state` indique au frontend HA de toujours
+    # garder les boutons ouvrir/fermer/stop actifs, même si le volet est
+    # déjà (censé être) ouvert ou fermé (cf. canOpen/canClose du frontend HA,
+    # qui désactivent sinon le bouton correspondant à l'état courant).
+    _attr_assumed_state = True
+
     def __init__(self, coordinator: YokisDataUpdateCoordinator, uid: str) -> None:
         """Initialise le suivi de position (détection de mouvement)."""
         super().__init__(coordinator, uid)
