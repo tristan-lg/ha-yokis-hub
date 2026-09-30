@@ -44,6 +44,7 @@ from typing import Any
 
 from homeassistant.components.cover import (
     ATTR_POSITION,
+    CoverDeviceClass,
     CoverEntity,
     CoverEntityFeature,
 )
@@ -59,6 +60,7 @@ from .const import (
     ORDER_GOTO,
     ORDER_OFF,
     ORDER_ON,
+    USE_COVER_DEVICE_CLASS,
 )
 from .coordinator import YokisDataUpdateCoordinator
 from .entity import YokisEntity
@@ -109,6 +111,23 @@ class YokisCover(YokisEntity, CoverEntity):
         self._transition_at: float | None = None
         # Sens du dernier changement détecté : True = ouverture, False = fermeture.
         self._moving_towards_open: bool | None = None
+
+    @property
+    def device_class(self) -> CoverDeviceClass | None:
+        """Type de volet HA (shutter/awning/gate/garage) selon `use`.
+
+        Permet à HA de proposer les bons libellés/icônes, et surtout de
+        faire apparaître les conditions d'automatisation standard
+        (« le volet est ouvert/fermé/en cours d'ouverture/de fermeture »)
+        pour le Device correspondant : ces conditions sont générées par le
+        composant `cover` dès que OPEN/CLOSE sont supportés (cf.
+        `cover.device_condition.async_get_conditions`), indépendamment du
+        `device_class`, mais celui-ci reste nécessaire pour un affichage
+        correct (« volet » plutôt que « portail »/« garage » générique).
+        """
+        use = int(self._meta.get("use", -1))
+        value = USE_COVER_DEVICE_CLASS.get(use)
+        return CoverDeviceClass(value) if value else None
 
     @property
     def _has_varx(self) -> bool:

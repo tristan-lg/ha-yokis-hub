@@ -53,6 +53,24 @@ DIMMABLE_USES: set[int] = {100}
 # Prises et contacts secs (famille 102/103 MTR autres)
 SWITCH_USES: set[int] = {201, 203, 204, 205, 206}
 
+# --- Device class HA (cover) selon le champ `use` ---
+# cf. models/ModuleType.java : SHUTTER=0, SUN_BLOCKER=1, BAN_STORE=2,
+# MOTORIZATION=3, FENCE=400, GARAGE_DOOR=401, SLIDING_GATE=402, SWING_GATE=403.
+# Valeurs de string identiques à celles de `CoverDeviceClass` (module `cover`).
+# Permet à HA de proposer les bons libellés/icônes et les conditions
+# d'automatisation adaptées (« le volet est ouvert/fermé/en cours
+# d'ouverture/de fermeture »), disponibles dès que OPEN/CLOSE sont supportés.
+USE_COVER_DEVICE_CLASS: dict[int, str] = {
+    0: "shutter",  # SHUTTER - volet roulant
+    1: "awning",  # SUN_BLOCKER - brise-soleil
+    2: "awning",  # BAN_STORE - store banne
+    3: "shutter",  # MOTORIZATION - motorisation générique de volet
+    400: "gate",  # FENCE - clôture/portillon motorisé
+    401: "garage",  # GARAGE_DOOR
+    402: "gate",  # SLIDING_GATE
+    403: "gate",  # SWING_GATE
+}
+
 
 def platform_for_use(use: int) -> Platform | None:
     """Retourne la plateforme HA correspondant à un champ `use`, ou None."""
